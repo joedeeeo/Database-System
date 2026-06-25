@@ -1,0 +1,284 @@
+<div class="db-explorer-container" [class.dark-mode]="darkMode">
+  <!-- Copy Toast -->
+  <div class="copy-toast" *ngIf="showCopyToast">
+    ✅ Copied: {{ copiedCell }}
+  </div>
+
+  <!-- Cell Modal -->
+  <div class="modal-overlay" *ngIf="showCellModal" (click)="closeCellModal()">
+    <div class="cell-modal" (click)="$event.stopPropagation()">
+      <div class="cell-modal-header">
+        <span>📋 {{ cellModalColumn }}</span>
+        <button class="dismiss-btn" (click)="closeCellModal()">✕</button>
+      </div>
+      <div class="cell-modal-body">
+        <pre>{{ cellModalValue }}</pre>
+      </div>
+      <div class="cell-modal-footer">
+        <button class="btn btn-run" (click)="copyCellModalValue()">📋 Copy Value</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Header -->
+  <div class="header">
+    <h2>🗄️ Database Explorer</h2>
+    <button class="theme-toggle" (click)="toggleTheme()" [attr.aria-label]="darkMode ? 'Switch to light mode' : 'Switch to dark mode'">
+      {{ darkMode ? '☀️' : '🌙' }}
+    </button>
+  </div>
+
+  <!-- Controls Bar -->
+  <div class="controls-bar">
+    <div class="form-group">
+      <label for="schema">Schema:</label>
+      <select id="schema" [(ngModel)]="selectedSchema" (change)="onSchemaChange()">
+        <option value="">Select schema</option>
+        <option *ngFor="let schema of schemas" [ngValue]="schema">{{ schema }}</option>
+      </select>
+    </div>
+
+    <div class="form-group" *ngIf="tables.length > 0">
+      <label for="table">Table:</label>
+      <select id="table" [(ngModel)]="selectedTable" (change)="onTableChange()">
+        <option value="">Select table</option>
+        <option *ngFor="let table of filteredTables" [ngValue]="table">{{ table }}</option>
+      </select>
+    </div>
+
+    <button class="btn btn-export" *ngIf="columns.length > 0 && activeTab === 'data'" (click)="exportToCsv()" title="Export to CSV">
+      📥 Export CSV
+    </button>
+  </div>
+
+  <!-- Table Search -->
+  <div class="table-search-bar" *ngIf="tables.length > 5">
+    <input
+      type="text"
+      [(ngModel)]="tableSearchQuery"
+      (input)="onTableSearch()"
+      (keydown)="onTableSearchKeydown($event)"
+      (focus)="showTableSearchResults = tableSearchQuery.length > 0"
+      placeholder="🔍 Search tables... ({{ tables.length }} tables)"
+      class="table-search-input"
+    />
+    <div class="table-search-results" *ngIf="showTableSearchResults && filteredTables.length > 0">
+      <div
+        class="table-search-item"
+        *ngFor="let t of filteredTables; let i = index"
+        (click)="selectTable(t)"
+        [class.active]="t === selectedTable"
+        [class.highlighted]="i === searchHighlightIndex"
+      >
+        {{ t }}
+      </div>
+    </div>
+    <div class="table-search-empty" *ngIf="showTableSearchResults && tableSearchQuery && filteredTables.length === 0">
+      No tables matching "{{ tableSearchQuery }}"
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs" *ngIf="selectedTable">
+    <button class="tab" [class.active]="activeTab === 'data'" (click)="activeTab = 'data'">
+      📊 Data
+    </button>
+    <button class="tab" [class.active]="activeTab === 'structure'" (click)="loadStructure()">
+      🏗️ Structure
+    </button>
+    <button class="tab" [class.active]="activeTab === 'query'" (click)="activeTab = 'query'">
+      ⚡ SQL Query
+    </button>
+  </div>
+
+  <!-- Loading Spinner -->
+  <div *ngIf="loading" class="loader">
+    <div class="spinner"></div>
+    <span>Loading...</span>
+  </div>
+
+  <!-- Error Message -->
+  <div *ngIf="errorMessage" class="error-banner">
+    ⚠️ {{ errorMessage }}
+    <button class="dismiss-btn" (click)="errorMessage = ''">✕</button>
+  </div>
+
+  <!-- DATA TAB -->
+  <div *ngIf="activeTab === 'data' && !loading">
+    <div class="table-container" *ngIf="columns.length > 0">
+      <div class="scroll-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th *ngFor="let col of columns">{{ col }}</th>
+            </tr>
+            <tr class="filter-row">
+              <th *ngFor="let col of columns; let i = index">
+                <input
+                  type="text"
+                  [(ngModel)]="columnFilters[i]"
+                  (input)="applyColumnFilters()"
+                  placeholder="Filter..."
+                />
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let row of filteredRows">
+              <td
+                *ngFor="let cell of row; let ci = index"
+                [title]="'Click to copy | Double-click to expand'"
+                (click)="copyCell(cell, $event)"
+                (dblclick)="openCellModal(cell, ci)"
+                class="clickable-cell"
+              >{{ cell }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Pagination -->
+      <div class="pagination-bar">
+        <div class="pagination-info">
+          Showing {{ (currentPage - 1) * pageSize + 1 }} - {{ currentPage * pageSize > totalRows ? totalRows : currentPage * pageSize }} of {{ totalRows }} rows
+        </div>
+        <div class="pagination-controls">
+          <select [(ngModel)]="pageSize" (change)="onPageSizeChange()" class="page-size-select">
+            <option [ngValue]="25">25 / page</option>
+            <option [ngValue]="50">50 / page</option>
+            <option [ngValue]="100">100 / page</option>
+            <option [ngValue]="200">200 / page</option>
+          </select>
+          <button class="page-btn" (click)="goToPage(1)" [disabled]="currentPage === 1">⏮</button>
+          <button class="page-btn" (click)="prevPage()" [disabled]="currentPage === 1">◀</button>
+          <button *ngFor="let p of getPageNumbers()" class="page-btn" [class.active]="p === currentPage" (click)="goToPage(p)">
+            {{ p }}
+          </button>
+          <button class="page-btn" (click)="nextPage()" [disabled]="currentPage === totalPages">▶</button>
+          <button class="page-btn" (click)="goToPage(totalPages)" [disabled]="currentPage === totalPages">⏭</button>
+        </div>
+      </div>
+    </div>
+
+    <div *ngIf="filteredRows.length === 0 && selectedTable && !loading" class="empty-message">
+      No matching data found.
+    </div>
+  </div>
+
+  <!-- STRUCTURE TAB -->
+  <div *ngIf="activeTab === 'structure'">
+    <div *ngIf="structureLoading" class="loader"><div class="spinner"></div><span>Loading structure...</span></div>
+    <div class="table-container" *ngIf="!structureLoading && tableStructure.length > 0">
+      <div class="scroll-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Column Name</th>
+              <th>Data Type</th>
+              <th>Size</th>
+              <th>Nullable</th>
+              <th>Default Value</th>
+              <th>Primary Key</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let col of tableStructure">
+              <td>
+                <span class="col-name">{{ col.name }}</span>
+                <span *ngIf="col.isPrimaryKey === 'YES'" class="pk-badge">PK</span>
+              </td>
+              <td><span class="type-badge">{{ col.type }}</span></td>
+              <td>{{ col.size }}</td>
+              <td>
+                <span [class.nullable-yes]="col.nullable === 'YES'" [class.nullable-no]="col.nullable === 'NO'">
+                  {{ col.nullable }}
+                </span>
+              </td>
+              <td>{{ col.defaultValue || '—' }}</td>
+              <td>{{ col.isPrimaryKey }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- SQL QUERY TAB -->
+  <div *ngIf="activeTab === 'query'" class="query-section">
+    <div class="query-editor">
+      <textarea
+        [(ngModel)]="sqlQuery"
+        placeholder="Enter your SQL query here... (e.g., SELECT * FROM SCHEMA.TABLE WHERE ...)"
+        rows="5"
+        class="sql-textarea"
+        (keydown.control.enter)="executeQuery()"
+      ></textarea>
+      <div class="query-actions">
+        <button class="btn btn-run" (click)="executeQuery()" [disabled]="queryLoading || !sqlQuery.trim()">
+          {{ queryLoading ? '⏳ Running...' : '▶ Run Query' }}
+        </button>
+        <button class="btn btn-history" (click)="toggleHistory()">
+          🕐 History ({{ queryHistory.length }})
+        </button>
+        <span class="shortcut-hint">Ctrl+Enter to run</span>
+        <span *ngIf="queryExecutionTime > 0" class="execution-time">
+          ⏱️ {{ queryExecutionTime }}ms
+        </span>
+      </div>
+    </div>
+
+    <!-- Query History Panel -->
+    <div class="history-panel" *ngIf="showHistory">
+      <div class="history-header">
+        <span>🕐 Query History</span>
+        <button class="btn btn-clear-history" (click)="clearHistory()" *ngIf="queryHistory.length > 0">Clear All</button>
+      </div>
+      <div class="history-list" *ngIf="queryHistory.length > 0">
+        <div class="history-item" *ngFor="let item of queryHistory; let i = index" (click)="loadFromHistory(item)">
+          <div class="history-sql">{{ item.sql }}</div>
+          <div class="history-meta">
+            <span>{{ formatTimestamp(item.timestamp) }}</span>
+            <span>{{ item.rowCount }} rows</span>
+            <span>{{ item.executionTime }}ms</span>
+            <button class="history-delete" (click)="deleteFromHistory(i, $event)" title="Delete">🗑️</button>
+          </div>
+        </div>
+      </div>
+      <div class="history-empty" *ngIf="queryHistory.length === 0">
+        No queries in history yet.
+      </div>
+    </div>
+
+    <!-- Query Error -->
+    <div *ngIf="queryError" class="query-error">
+      ❌ {{ queryError }}
+    </div>
+
+    <!-- Query Results -->
+    <div class="table-container" *ngIf="queryColumns.length > 0 && !queryLoading">
+      <div class="query-result-info">
+        {{ queryRows.length }} row(s) returned
+      </div>
+      <div class="scroll-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th *ngFor="let col of queryColumns">{{ col }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let row of queryRows">
+              <td
+                *ngFor="let cell of row; let ci = index"
+                [title]="'Click to copy | Double-click to expand'"
+                (click)="copyCell(cell, $event)"
+                (dblclick)="openCellModal(cell, ci)"
+                class="clickable-cell"
+              >{{ cell }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>

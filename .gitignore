@@ -1,0 +1,21 @@
+# Angular
+db-explorer-frontend/node_modules/
+db-explorer-frontend/dist/
+db-explorer-frontend/.angular/
+
+# Java/Maven
+dbexplorer/target/
+dbexplorer/*.jar
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.kiro/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+*.env
